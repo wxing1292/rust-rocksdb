@@ -20,11 +20,12 @@ use std::sync::Arc;
 
 use libc::{self, c_char, c_double, c_int, c_uchar, c_uint, c_void, size_t};
 
+use crate::comparator::ComparatorWithTSCallback;
 use crate::statistics::{Histogram, HistogramData, StatsLevel};
 use crate::{
     compaction_filter::{self, CompactionFilterCallback, CompactionFilterFn},
     compaction_filter_factory::{self, CompactionFilterFactory},
-    comparator::{self, ComparatorCallback, CompareFn},
+    comparator::{self, ComparatorCallback, CompareFn, CompareTSFn, CompareWithoutTSFn},
     db::DBAccess,
     env::Env,
     ffi,
@@ -342,6 +343,7 @@ pub struct BlockBasedOptions {
 
 pub struct ReadOptions {
     pub(crate) inner: *mut ffi::rocksdb_readoptions_t,
+    timestamp: Option<Vec<u8>>,
     iterate_upper_bound: Option<Vec<u8>>,
     iterate_lower_bound: Option<Vec<u8>>,
 }
@@ -1574,6 +1576,41 @@ impl Options {
                 Some(comparator::destructor_callback),
                 Some(comparator::compare_callback),
                 Some(comparator::name_callback),
+            );
+            ffi::rocksdb_options_set_comparator(self.inner, cmp);
+        }
+    }
+
+    /// Sets the comparator used to define the order of keys in the table.
+    /// Default: a comparator that uses lexicographic byte-wise ordering
+    ///
+    /// The client must ensure that the comparator supplied here has the same
+    /// name and orders keys *exactly* the same as the comparator provided to
+    /// previous open calls on the same DB.
+    pub fn set_comparator_with_ts(
+        &mut self,
+        name: impl CStrLike,
+        compare_fn: Box<CompareFn>,
+        compare_ts_fn: Box<CompareTSFn>,
+        compare_without_ts_fn: Box<CompareWithoutTSFn>,
+        timestamp_size: usize,
+    ) {
+        let cb = Box::new(ComparatorWithTSCallback {
+            name: name.into_c_string().unwrap(),
+            compare: compare_fn,
+            compare_ts: compare_ts_fn,
+            compare_without_ts: compare_without_ts_fn,
+        });
+
+        unsafe {
+            let cmp = ffi::rocksdb_comparator_with_ts_create(
+                Box::into_raw(cb).cast::<c_void>(),
+                Some(comparator::destructor_with_ts_callback),
+                Some(comparator::compare_with_ts_compare_callback),
+                Some(comparator::compare_with_ts_compare_ts_callback),
+                Some(comparator::compare_with_ts_compare_without_ts_callback),
+                Some(comparator::name_with_ts_callback),
+                timestamp_size,
             );
             ffi::rocksdb_options_set_comparator(self.inner, cmp);
         }
@@ -3556,6 +3593,16 @@ impl ReadOptions {
         }
     }
 
+    pub fn set_timestamp<TS: Into<Vec<u8>>>(&mut self, timestamp: TS) {
+        let timestamp = timestamp.into();
+        let ptr = timestamp.as_ptr() as *const c_char;
+        let len = timestamp.len();
+        self.timestamp = Some(timestamp);
+        unsafe {
+            ffi::rocksdb_readoptions_set_timestamp(self.inner, ptr, len);
+        }
+    }
+
     /// Sets the snapshot which should be used for the read.
     /// The snapshot must belong to the DB that is being read and must
     /// not have been released.
@@ -3801,6 +3848,7 @@ impl Default for ReadOptions {
         unsafe {
             Self {
                 inner: ffi::rocksdb_readoptions_create(),
+                timestamp: None,
                 iterate_upper_bound: None,
                 iterate_lower_bound: None,
             }
@@ -4169,6 +4217,7 @@ pub enum BottommostLevelCompaction {
 
 pub struct CompactOptions {
     pub(crate) inner: *mut ffi::rocksdb_compactoptions_t,
+    full_history_ts_low: Option<Vec<u8>>,
 }
 
 impl Default for CompactOptions {
@@ -4176,7 +4225,10 @@ impl Default for CompactOptions {
         let opts = unsafe { ffi::rocksdb_compactoptions_create() };
         assert!(!opts.is_null(), "Could not create RocksDB Compact Options");
 
-        Self { inner: opts }
+        Self {
+            inner: opts,
+            full_history_ts_low: None,
+        }
     }
 }
 
@@ -4223,6 +4275,19 @@ impl CompactOptions {
     pub fn set_target_level(&mut self, lvl: c_int) {
         unsafe {
             ffi::rocksdb_compactoptions_set_target_level(self.inner, lvl);
+        }
+    }
+
+    pub fn set_full_history_ts_low<TS>(&mut self, timestamp: TS)
+    where
+        TS: Into<Vec<u8>>,
+    {
+        let timestamp = timestamp.into();
+        let ptr = timestamp.as_ptr() as *const c_char as *mut c_char;
+        let len = timestamp.len();
+        self.full_history_ts_low = Some(timestamp);
+        unsafe {
+            ffi::rocksdb_compactoptions_set_full_history_ts_low(self.inner, ptr, len);
         }
     }
 }

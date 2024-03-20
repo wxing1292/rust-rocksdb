@@ -791,6 +791,35 @@ impl<T: ThreadMode> DBWithThreadMode<T> {
         }
     }
 
+    /// Removes the database entries in the range `["from", "to")` using given write options.
+    pub fn delete_range_cf_with_ts_opt<K: AsRef<[u8]>, TS: AsRef<[u8]>>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        from: K,
+        to: K,
+        ts: TS,
+        writeopts: &WriteOptions,
+    ) -> Result<(), Error> {
+        let from = from.as_ref();
+        let to = to.as_ref();
+        let ts = ts.as_ref();
+
+        unsafe {
+            ffi_try!(ffi::rocksdb_delete_range_cf_with_ts(
+                self.inner.inner(),
+                writeopts.inner,
+                cf.inner(),
+                from.as_ptr() as *const c_char,
+                from.len() as size_t,
+                to.as_ptr() as *const c_char,
+                to.len() as size_t,
+                ts.as_ptr() as *const c_char,
+                ts.len() as size_t,
+            ));
+            Ok(())
+        }
+    }
+
     /// Removes the database entries in the range `["from", "to")` using default write options.
     pub fn delete_range_cf<K: AsRef<[u8]>>(
         &self,
@@ -1530,6 +1559,39 @@ impl<T: ThreadMode, D: DBInner> DBCommon<T, D> {
         }
     }
 
+    pub fn put_cf_with_ts_opt<K, TS, V>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+        ts: TS,
+        value: V,
+        writeopts: &WriteOptions,
+    ) -> Result<(), Error>
+    where
+        K: AsRef<[u8]>,
+        TS: AsRef<[u8]>,
+        V: AsRef<[u8]>,
+    {
+        let key = key.as_ref();
+        let ts = ts.as_ref();
+        let value = value.as_ref();
+
+        unsafe {
+            ffi_try!(ffi::rocksdb_put_cf_with_ts(
+                self.inner.inner(),
+                writeopts.inner,
+                cf.inner(),
+                key.as_ptr() as *const c_char,
+                key.len() as size_t,
+                ts.as_ptr() as *const c_char,
+                ts.len() as size_t,
+                value.as_ptr() as *const c_char,
+                value.len() as size_t,
+            ));
+            Ok(())
+        }
+    }
+
     pub fn merge_opt<K, V>(&self, key: K, value: V, writeopts: &WriteOptions) -> Result<(), Error>
     where
         K: AsRef<[u8]>,
@@ -1612,6 +1674,34 @@ impl<T: ThreadMode, D: DBInner> DBCommon<T, D> {
                 cf.inner(),
                 key.as_ptr() as *const c_char,
                 key.len() as size_t,
+            ));
+            Ok(())
+        }
+    }
+
+    pub fn delete_cf_with_ts_opt<K, TS>(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+        ts: TS,
+        writeopts: &WriteOptions,
+    ) -> Result<(), Error>
+    where
+        K: AsRef<[u8]>,
+        TS: AsRef<[u8]>,
+    {
+        let key = key.as_ref();
+        let ts = ts.as_ref();
+
+        unsafe {
+            ffi_try!(ffi::rocksdb_delete_cf_with_ts(
+                self.inner.inner(),
+                writeopts.inner,
+                cf.inner(),
+                key.as_ptr() as *const c_char,
+                key.len() as size_t,
+                ts.as_ptr() as *const c_char,
+                ts.len() as size_t,
             ));
             Ok(())
         }
